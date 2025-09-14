@@ -1,0 +1,466 @@
+import sys
+import os
+import pandas as pd
+import numpy as np
+from datetime import datetime
+from src.exception import CustomException
+from src.logger import logging
+from src.utils import load_object
+
+class PredictPipeline:
+    def __init__(self):
+        pass
+
+    def predict(self, features):
+        try:
+            model_path = os.path.join("artifacts", "model.pkl")
+            preprocessor_path = os.path.join("artifacts", "preprocessor.pkl")
+            
+            logging.info("Before Loading")
+            model = load_object(file_path=model_path)
+            preprocessor = load_object(file_path=preprocessor_path)
+            logging.info("After Loading")
+            logging.info(f"Input features shape: {features.shape}")
+            
+            data_scaled = preprocessor.transform(features)
+            logging.info(f"Scaled features shape: {data_scaled.shape}")
+            
+            preds = model.predict(data_scaled)
+            logging.info(f"Prediction completed successfully: {preds}")
+            return preds
+        
+        except Exception as e:
+            logging.error(f"Error in prediction: {str(e)}")
+            raise CustomException(e, sys)
+
+class CustomData:
+    def __init__(self,
+                 wind_speed: float,
+                 wind_direction: float,
+                 theoretical_power: float,
+                 date_time: str,
+                 temperature: float = None):
+        
+        self.wind_speed = wind_speed
+        self.wind_direction = wind_direction
+        self.theoretical_power = theoretical_power
+        self.date_time = date_time
+        self.temperature = temperature
+
+    def get_deviation(self, wind_direction):
+        """Calculate deviation from optimal wind directions (60° and 210°)"""
+        optimal_angles = [60, 210]
+        deviations = [
+            min(
+                abs(wind_direction - angle),
+                abs(wind_direction - angle + 360),
+                abs(wind_direction - angle - 360)
+            ) for angle in optimal_angles
+        ]
+        return min(deviations)
+
+    def get_data_as_data_frame(self):
+        """
+        Process input data and create a DataFrame with engineered features for prediction.
+        Returns:
+            pd.DataFrame: DataFrame containing all required features
+        """
+        try:
+            # Parse datetime
+            dt = pd.to_datetime(self.date_time)
+            logging.info(f"Processing data for datetime: {dt}")
+            
+            # 1. TEMPORAL FEATURES
+            month = dt.month
+            week = dt.isocalendar().week
+            day = dt.day
+            hour = dt.hour
+            day_of_year = dt.dayofyear
+            day_of_week = dt.dayofweek
+            
+            # 2. CYCLICAL TIME FEATURES
+            hour_sin = np.sin(2 * np.pi * hour / 24)
+            hour_cos = np.cos(2 * np.pi * hour / 24)
+            month_sin = np.sin(2 * np.pi * (month - 1) / 12)
+            month_cos = np.cos(2 * np.pi * (month - 1) / 12)
+            
+            # 3. WIND VECTOR COMPONENTS
+            rad = np.deg2rad(self.wind_direction)
+            wind_u = self.wind_speed * np.cos(rad)
+            wind_v = self.wind_speed * np.sin(rad)
+            
+            # 4. POWER-POLYNOMIAL FEATURES
+            v2 = self.wind_speed ** 2
+            v3 = self.wind_speed ** 3
+            
+            # 5. WIND DIRECTION OPTIMIZATION
+            Wind_Direction_Deviation = self.get_deviation(self.wind_direction)
+            Effective_Theoretical_Power = (
+                (100 - (Wind_Direction_Deviation / 360) * 100) * 
+                self.theoretical_power / 100
+            )
+            
+            # 6. SEASONAL FEATURES
+            if month in [12, 1, 2]:
+                season = 'Winter'
+            elif month in [3, 4, 5]:
+                season = 'Spring'
+            elif month in [6, 7, 8]:
+                season = 'Summer'
+            else:
+                season = 'Autumn'
+            
+            # 7. DAY/NIGHT FEATURE
+            is_day = 1 if 6 <= hour <= 18 else 0
+            
+            # 8. WIND POWER FEATURES
+            wind_power_density = 0.5 * 1.225 * v3
+            wind_direction_efficiency = np.cos(np.radians(Wind_Direction_Deviation))
+            
+            # 9. AIR DENSITY AND TEMPERATURE FEATURES
+            if self.temperature is not None:
+                air_density = 1.225 * (288.15 / (self.temperature + 273.15))
+                temperature_adjusted_power = wind_power_density * (air_density / 1.225)
+            else:
+                air_density = 1.225
+                temperature_adjusted_power = wind_power_density
+            
+            # 10. TURBINE REGIME
+            cut_in_speed = 3.0  # Default value
+            rated_velocity = 17.9  # Default value
+            
+            if self.wind_speed < cut_in_speed:
+                regime = 'below_cut_in'
+            elif self.wind_speed < rated_velocity:
+                regime = 'partial'
+            else:
+                regime = 'rated'
+            
+            # Create the dataframe with all required features
+            custom_data_input_dict = {
+                "Wind Speed (m/s)": [self.wind_speed],
+                "Wind Direction (°)": [self.wind_direction],
+                "Theoretical_Power_Curve (KWh)": [self.theoretical_power],
+                "Temperature (°C)": [self.temperature] if self.temperature else [None],
+                "wind_u": [wind_u],
+                "wind_v": [wind_v],
+                "v2": [v2],
+                "v3": [v3],
+                "month_sin": [month_sin],
+                "month_cos": [month_cos],
+                "hour_sin": [hour_sin],
+                "hour_cos": [hour_cos],
+                "Wind_Direction_Deviation": [Wind_Direction_Deviation],
+                "Day": [is_day],
+                "Seasons": [season],
+                "Month": [month],
+                "Week": [week],
+                "Hour": [hour],
+                "DayOfYear": [day_of_year],
+                "DayOfWeek": [day_of_week],
+                "Wind Power Density": [wind_power_density],
+                "Wind Direction Efficiency": [wind_direction_efficiency],
+                "Air Density": [air_density],
+                "Temperature Adjusted Power": [temperature_adjusted_power],
+                "Effective Theoretical Power(kWh)": [Effective_Theoretical_Power],
+                # Time-series features (using current values as placeholders)
+                "wind_mean_1h": [self.wind_speed],
+                "wind_std_1h": [0],
+                "wind_max_1h": [self.wind_speed],
+                "TI_1h": [0],
+                "regime": [regime]
+            }
+
+            df = pd.DataFrame(custom_data_input_dict)
+            logging.info(f"Created DataFrame with shape: {df.shape}")
+            return df
+            
+        except Exception as e:
+            logging.error(f"Error in data preprocessing: {str(e)}")
+            raise CustomException(e, sys)
+
+class CustomData:
+    def __init__(self,
+                 wind_speed: float,
+                 wind_direction: float,
+                 theoretical_power: float,
+                 date_time: str,
+                 temperature: float = None):
+        
+        self.wind_speed = wind_speed
+        self.wind_direction = wind_direction
+        self.theoretical_power = theoretical_power
+        self.date_time = date_time
+        self.temperature = temperature
+
+    def get_deviation(self, wind_direction):
+        """Calculate deviation from optimal wind directions (60° and 210°)"""
+        optimal_angles = [60, 210]
+        deviations = [
+            min(
+                abs(wind_direction - angle),
+                abs(wind_direction - angle + 360),
+                abs(wind_direction - angle - 360)
+            ) for angle in optimal_angles
+        ]
+        return min(deviations)
+
+    def get_data_as_data_frame(self):
+        try:
+            # Parse datetime
+            dt = pd.to_datetime(self.date_time)
+            logging.info(f"Processing data for datetime: {dt}")
+            
+            # 1. TEMPORAL FEATURES
+            week = dt.isocalendar().week
+            month = dt.month
+            day = dt.day
+            hour = dt.hour
+            day_of_year = dt.dayofyear
+            day_of_week = dt.dayofweek
+            
+            # 2. CYCLICAL TIME FEATURES
+            hour_sin = np.sin(2 * np.pi * hour / 24)
+            hour_cos = np.cos(2 * np.pi * hour / 24)
+            month_sin = np.sin(2 * np.pi * (month - 1) / 12)
+            month_cos = np.cos(2 * np.pi * (month - 1) / 12)
+            
+            # 3. WIND VECTOR COMPONENTS
+            wind_direction_rad = np.deg2rad(self.wind_direction)
+            wind_u = self.wind_speed * np.cos(wind_direction_rad)
+            wind_v = self.wind_speed * np.sin(wind_direction_rad)
+            
+            # 4. POWER-POLYNOMIAL FEATURES
+            v2 = self.wind_speed ** 2
+            v3 = self.wind_speed ** 3
+            
+            # 5. WIND DIRECTION OPTIMIZATION
+            Wind_Direction_Deviation = self.get_deviation(self.wind_direction)
+            
+            # 6. SEASONAL FEATURES (numerical)
+            if month in [12, 1, 2]:
+                season = 1  # Winter
+            elif month in [3, 4, 5]:
+                season = 2  # Spring
+            elif month in [6, 7, 8]:
+                season = 3  # Summer
+            else:
+                season = 4  # Autumn
+            
+            # 7. DAY/NIGHT FEATURE
+            is_day = 1 if 6 <= hour <= 18 else 0
+            
+            # Create the dataframe with all required features
+            custom_data_input_dict = {
+                "Wind Speed (m/s)": [self.wind_speed],
+                "Wind Direction (°)": [self.wind_direction],
+                "Theoretical_Power_Curve (KWh)": [self.theoretical_power],
+                "wind_u": [wind_u],
+                "wind_v": [wind_v],
+                "v2": [v2],
+                "v3": [v3],
+                "month_sin": [month_sin],
+                "month_cos": [month_cos],
+                "hour_sin": [hour_sin],
+                "hour_cos": [hour_cos],
+                "Wind_Direction_Deviation": [Wind_Direction_Deviation],
+                "Day": [is_day],
+                "Seasons": [season],
+                "Month": [month],
+                "Week": [week],
+                "Hour": [hour],
+                "DayOfYear": [day_of_year],
+                "DayOfWeek": [day_of_week],
+                # Default values for time-series features
+                "wind_mean_1h": [self.wind_speed],
+                "wind_std_1h": [0],
+                "wind_max_1h": [self.wind_speed],
+                "TI_1h": [0],
+                "regime": [1]  # Default regime
+            }
+            
+            # Add temperature if provided
+            if self.temperature is not None:
+                custom_data_input_dict["Temperature (°C)"] = [self.temperature]
+            
+            df = pd.DataFrame(custom_data_input_dict)
+            logging.info(f"Created DataFrame with shape: {df.shape}")
+            return df
+            
+        except Exception as e:
+            logging.error(f"Error in data preprocessing: {str(e)}")
+            raise CustomException(e, sys)
+            
+            # Season mapping
+            season_mapping = {
+                12: "Winter", 1: "Winter", 2: "Winter",
+                3: "Spring", 4: "Spring", 5: "Spring",
+                6: "Summer", 7: "Summer", 8: "Summer",
+                9: "Autumn", 10: "Autumn", 11: "Autumn"
+            }
+            season = season_mapping[month]
+            
+            # Day/Night (simplified - based on hour)
+            day_night = 0 if 6 <= hour <= 18 else 1
+            
+            # Calculate engineered features
+            effective_theoretical_power = (
+                100 - ((self.get_deviation(self.wind_direction) / 360) * 100)
+            ) * self.theoretical_power / 100
+            
+            wind_power_density = 0.5 * 1.225 * (self.wind_speed ** 3)
+            wind_direction_efficiency = np.cos(np.radians(self.get_deviation(self.wind_direction)))
+            power_curve_efficiency = 1.0  # Default value
+            
+            # Wind speed category
+            cut_in_speed = 3.0
+            rated_velocity = 17.9
+            
+            if self.wind_speed < cut_in_speed:
+                wind_speed_category = "Below Cut-in"
+            elif self.wind_speed < 7:
+                wind_speed_category = "Low"
+            elif self.wind_speed < 12:
+                wind_speed_category = "Medium"
+            elif self.wind_speed < rated_velocity:
+                wind_speed_category = "High"
+            else:
+                wind_speed_category = "Above Rated"
+            
+            # Rolling statistics (simplified)
+            wind_speed_rolling_mean = self.wind_speed
+            wind_speed_rolling_std = 0.1  # Default small value
+            turbulence_intensity = wind_speed_rolling_std / wind_speed_rolling_mean
+            
+            # Cyclic features
+            month_sin = np.sin(2 * np.pi * month / 12)
+            month_cos = np.cos(2 * np.pi * month / 12)
+            hour_sin = np.sin(2 * np.pi * hour / 24)
+            hour_cos = np.cos(2 * np.pi * hour / 24)
+            
+            wind_direction_sin = np.sin(np.radians(self.wind_direction))
+            wind_direction_cos = np.cos(np.radians(self.wind_direction))
+            
+            def get_data_as_data_frame(self):
+        try:
+            # Parse datetime
+            dt = pd.to_datetime(self.date_time)
+            
+            # 1. TEMPORAL FEATURES
+            month = dt.month
+            week = dt.isocalendar().week
+            day = dt.day
+            hour = dt.hour
+            day_of_year = dt.dayofyear
+            day_of_week = dt.dayofweek
+            
+            # 2. CYCLICAL TIME FEATURES
+            hour_sin = np.sin(2 * np.pi * hour / 24)
+            hour_cos = np.cos(2 * np.pi * hour / 24)
+            month_sin = np.sin(2 * np.pi * (month - 1) / 12)
+            month_cos = np.cos(2 * np.pi * (month - 1) / 12)
+            
+            # 3. WIND VECTOR COMPONENTS
+            rad = np.deg2rad(self.wind_direction)
+            wind_u = self.wind_speed * np.cos(rad)
+            wind_v = self.wind_speed * np.sin(rad)
+            
+            # 4. POWER-POLYNOMIAL FEATURES
+            v2 = self.wind_speed ** 2
+            v3 = self.wind_speed ** 3
+            
+            # 5. WIND DIRECTION OPTIMIZATION
+            Wind_Direction_Deviation = self.get_deviation(self.wind_direction)
+            Effective_Theoretical_Power = (
+                (100 - (Wind_Direction_Deviation / 360) * 100) * 
+                self.theoretical_power / 100
+            )
+            
+            # 6. SEASONAL FEATURES
+            if month in [12, 1, 2]:
+                season = 'Winter'
+            elif month in [3, 4, 5]:
+                season = 'Spring'
+            elif month in [6, 7, 8]:
+                season = 'Summer'
+            else:
+                season = 'Autumn'
+            
+            # 7. DAY/NIGHT FEATURE
+            is_day = 1 if 6 <= hour <= 18 else 0
+            
+            # 8. WIND POWER FEATURES
+            wind_power_density = 0.5 * 1.225 * v3
+            wind_direction_efficiency = np.cos(np.radians(Wind_Direction_Deviation))
+            
+            # 9. AIR DENSITY AND TEMPERATURE FEATURES
+            if self.temperature is not None:
+                air_density = 1.225 * (288.15 / (self.temperature + 273.15))
+                temperature_adjusted_power = wind_power_density * (air_density / 1.225)
+            else:
+                air_density = 1.225
+                temperature_adjusted_power = wind_power_density
+            
+            # 10. TURBINE REGIME
+            cut_in_speed = 3.0  # Default value
+            rated_velocity = 17.9  # Default value
+            
+            if self.wind_speed < cut_in_speed:
+                regime = 'below_cut_in'
+            elif self.wind_speed < rated_velocity:
+                regime = 'partial'
+            else:
+                regime = 'rated'
+            
+            # Create the dataframe with all required features
+            custom_data_input_dict = {
+                "Wind Speed (m/s)": [self.wind_speed],
+                "Wind Direction (°)": [self.wind_direction],
+                "Theoretical_Power_Curve (KWh)": [self.theoretical_power],
+                "Temperature (°C)": [self.temperature] if self.temperature else [None],
+                "wind_u": [wind_u],
+                "wind_v": [wind_v],
+                "v2": [v2],
+                "v3": [v3],
+                "month_sin": [month_sin],
+                "month_cos": [month_cos],
+                "hour_sin": [hour_sin],
+                "hour_cos": [hour_cos],
+                "Wind_Direction_Deviation": [Wind_Direction_Deviation],
+                "Day": [is_day],
+                "Seasons": [season],
+                "Month": [month],
+                "Week": [week],
+                "Day": [day],
+                "Hour": [hour],
+                "DayOfYear": [day_of_year],
+                "DayOfWeek": [day_of_week],
+                "Wind Power Density": [wind_power_density],
+                "Wind Direction Efficiency": [wind_direction_efficiency],
+                "Air Density": [air_density],
+                "Temperature Adjusted Power": [temperature_adjusted_power],
+                "Effective Theoretical Power(kWh)": [Effective_Theoretical_Power],
+                # Time-series features (using current values as placeholders)
+                "wind_mean_1h": [self.wind_speed],
+                "wind_std_1h": [0],
+                "wind_max_1h": [self.wind_speed],
+                "TI_1h": [0],
+                "regime": [regime]
+            }
+            return pd.DataFrame(custom_data_input_dict)
+            
+            # Add temperature features if provided
+            if self.temperature is not None:
+                air_density = 1.225 * (288.15 / (self.temperature + 273.15))
+                temperature_adjusted_power = wind_power_density * (air_density / 1.225)
+                
+                custom_data_input_dict.update({
+                    "Temperature (°C)": [self.temperature],
+                    "Air Density": [air_density],
+                    "Temperature Adjusted Power": [temperature_adjusted_power]
+                })
+
+            return pd.DataFrame(custom_data_input_dict)
+
+        except Exception as e:
+            raise CustomException(e, sys)
