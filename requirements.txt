@@ -1,3 +1,17 @@
-numpy
 pandas
+numpy
+scikit-learn
+xgboost
+catboost
+joblib
+fastapi
+uvicorn[standard]
+pydantic
 matplotlib
+seaborn
+shap
+optuna
+astral
+meteostat
+flask
+-e .

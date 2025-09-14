@@ -1,0 +1,140 @@
+"""
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Wind Turbine Power Prediction</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #34495e;
+            font-weight: bold;
+        }
+        input[type="text"], input[type="number"], input[type="datetime-local"] {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #bdc3c7;
+            border-radius: 5px;
+            font-size: 16px;
+            box-sizing: border-box;
+        }
+        input[type="text"]:focus, input[type="number"]:focus, input[type="datetime-local"]:focus {
+            border-color: #3498db;
+            outline: none;
+        }
+        .submit-btn {
+            width: 100%;
+            padding: 15px;
+            background-color: #27ae60;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 18px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        .submit-btn:hover {
+            background-color: #229954;
+        }
+        .result {
+            margin-top: 30px;
+            padding: 20px;
+            background-color: #e8f5e8;
+            border-left: 5px solid #27ae60;
+            border-radius: 5px;
+        }
+        .result h2 {
+            color: #27ae60;
+            margin-top: 0;
+        }
+        .back-btn {
+            display: inline-block;
+            margin-top: 20px;
+            padding: 10px 20px;
+            background-color: #95a5a6;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+        }
+        .back-btn:hover {
+            background-color: #7f8c8d;
+        }
+        .helper-text {
+            font-size: 12px;
+            color: #7f8c8d;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🌪️ Wind Turbine Power Prediction</h1>
+        
+        <form action="/predictdata" method="post">
+            <div class="form-group">
+                <label for="wind_speed">Wind Speed (m/s):</label>
+                <input type="number" name="wind_speed" step="0.01" min="0" max="50" required>
+                <div class="helper-text">Enter wind speed in meters per second (0-50)</div>
+            </div>
+            
+            <div class="form-group">
+                <label for="wind_direction">Wind Direction (°):</label>
+                <input type="number" name="wind_direction" step="0.01" min="0" max="360" required>
+                <div class="helper-text">Enter wind direction in degrees (0-360)</div>
+            </div>
+            
+            <div class="form-group">
+                <label for="theoretical_power">Theoretical Power Curve (kWh):</label>
+                <input type="number" name="theoretical_power" step="0.01" min="0" required>
+                <div class="helper-text">Enter theoretical power output in kWh</div>
+            </div>
+            
+            <div class="form-group">
+                <label for="date_time">Date and Time:</label>
+                <input type="datetime-local" name="date_time" required>
+                <div class="helper-text">Select the date and time for prediction</div>
+            </div>
+            
+            <div class="form-group">
+                <label for="temperature">Temperature (°C) [Optional]:</label>
+                <input type="number" name="temperature" step="0.1" min="-50" max="50">
+                <div class="helper-text">Enter temperature in Celsius (optional, will improve accuracy)</div>
+            </div>
+            
+            <button type="submit" class="submit-btn">Predict Power Output</button>
+        </form>
+        
+        {% if results %}
+        <div class="result">
+            <h2>Prediction Result</h2>
+            <p><strong>Predicted Power Output: {{results}} kW</strong></p>
+            <p>This prediction is based on the input parameters and historical wind turbine performance data using advanced machine learning algorithms.</p>
+        </div>
+        {% endif %}
+        
+        <a href="/" class="back-btn">← Back to Home</a>
+    </div>
+</body>
+</html>
+"""
